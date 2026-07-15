@@ -8,7 +8,7 @@ const multer = require("multer");
 const cors = require("cors");
 const pdfParse = require("pdf-parse");
 const mongoose = require("mongoose");
-
+const { GoogleGenAI } = require("@google/genai");
 // =========================
 // 🚀 APP INIT
 // =========================
@@ -27,6 +27,9 @@ console.log("Mongo URI:", process.env.MONGO_URI);
 mongoose.connect(process.env.MONGO_URI)
   .then(() => console.log("✅ MongoDB Atlas Connected"))
   .catch(err => console.log("❌ DB Error:", err));
+  const ai = new GoogleGenAI({
+  apiKey: process.env.GEMINI_API_KEY
+});
 // =========================
 // 👤 USER MODEL
 // =========================
@@ -96,87 +99,89 @@ app.post("/analyze", upload.single("resume"), async (req, res) => {
     if (!jobDesc) return res.status(400).json({ error: "No job description" });
 
     const data = await pdfParse(file.buffer);
+    const resumeText = data.text;
+const jdText = jobDesc;
 
-    const resumeText = data.text.toLowerCase();
-    const jdText = jobDesc.toLowerCase();
+const prompt = `
+You are an ATS Resume Analyzer.
 
-    // 🔥 SKILLS LIST
-    const skillsList = [
-      "java", "python", "c++", "javascript", "react", "node", "express",
-      "mongodb", "sql", "html", "css", "machine learning", "deep learning",
-      "nlp", "data analysis", "aws", "docker", "kubernetes",
-      "system design", "dsa", "problem solving", "git"
-    ];
+Compare the resume against the job description.
 
-    let matchedSkills = [];
-    let missingSkills = [];
+Return ONLY valid JSON.
 
-    // ✅ MATCHING
-    skillsList.forEach(skill => {
-      if (jdText.includes(skill)) {
-        if (resumeText.includes(skill)) {
-          matchedSkills.push(skill);
-        } else {
-          missingSkills.push(skill);
-        }
-      }
-    });
+Do NOT write any explanation.
 
-    // ✅ SCORE
-    const total = matchedSkills.length + missingSkills.length;
-    let score = total === 0 ? 0 : Math.round((matchedSkills.length / total) * 100);
+Do NOT write markdown.
 
-    // =========================
-    // 💡 SMART SUGGESTIONS
-    // =========================
-    const suggestions = [];
+Do NOT use \`\`\`.
 
-    // Skill-based suggestions
-    missingSkills.forEach(skill => {
-      suggestions.push(`Include ${skill} in your resume with a project or hands-on experience.`);
-    });
+Return exactly this format:
 
-    // Score-based suggestions
-    if (score < 50) {
-      suggestions.push("Your resume lacks key required skills. Focus on improving technical strength.");
-    } else if (score < 80) {
-      suggestions.push("You have partial match. Improving missing skills will increase your chances.");
-    } else {
-      suggestions.push("Good match! Strengthen your profile with real-world projects and achievements.");
-    }
+{
+  "score": 87,
+  "matchedSkills": [
+    "Java",
+    "React"
+  ],
+  "missingSkills": [
+    "Docker"
+  ],
+  "suggestions": [
+    "Learn Docker",
+    "Improve ATS formatting"
+  ]
+}
 
-    // Role-specific improvements
-    if (missingSkills.includes("react")) {
-      suggestions.push("Build a frontend project using React to demonstrate your skills.");
-    }
+Resume:
 
-    if (missingSkills.includes("aws")) {
-      suggestions.push("Deploy a project on AWS to showcase cloud experience.");
-    }
+${resumeText.substring(0,4000)}
 
-    if (missingSkills.includes("dsa")) {
-      suggestions.push("Practice DSA problems on platforms like LeetCode.");
-    }
+Job Description:
 
-    if (missingSkills.includes("machine learning")) {
-      suggestions.push("Work on ML projects like prediction models or NLP applications.");
-    }
+${jdText}
+`;
 
-    // General improvements
-    suggestions.push("Add quantified achievements (e.g., improved performance by 30%).");
-    suggestions.push("Ensure your resume is well-structured and ATS-friendly.");
-    suggestions.push("Use keywords from the job description.");
+const result = await ai.models.generateContent({
+  model: "gemini-3.5-flash",
+  contents: prompt,
+});
+console.log(JSON.stringify(result, null, 2));
+const response =
+  typeof result.text === "string"
+    ? result.text
+    : result.text();
 
-    // =========================
-    // ✅ RESPONSE
-    // =========================
-    res.json({
-      score,
-      matchedSkills,
-      missingSkills,
-      suggestions
-    });
+console.log(response);
 
+const cleanResponse = response
+  .replace(/```json/g, "")
+  .replace(/```/g, "")
+  .trim();
+
+let analysis;
+
+try {
+  analysis = JSON.parse(cleanResponse);
+} catch (e) {
+  console.error("Invalid Gemini JSON:", cleanResponse);
+
+  return res.status(500).json({
+    score: 0,
+    matchedSkills: [],
+    missingSkills: [],
+    suggestions: [
+      "Gemini returned an invalid response. Please try again."
+    ]
+  });
+}
+
+res.json({
+  score: analysis.score || 0,
+  matchedSkills: analysis.matchedSkills || [],
+  missingSkills: analysis.missingSkills || [],
+  suggestions: analysis.suggestions || []
+});
+   
   } catch (err) {
     console.error("Backend Error:", err);
 
