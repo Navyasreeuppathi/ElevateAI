@@ -28,7 +28,7 @@ export default function Upload() {
     formData.append("jobDesc", jobDesc);
 
     try {
-      const res = await fetch("http://localhost:5000/analyze", {
+      const res = await fetch(`${import.meta.env.VITE_API_URL}/analyze`, {
         method: "POST",
         body: formData,
       });
